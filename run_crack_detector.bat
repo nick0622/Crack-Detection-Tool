@@ -9,7 +9,7 @@ setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
 :: Default settings
-set "CONFIDENCE=0.15"
+set "CONFIDENCE=0.2"
 set "ENHANCE_FLAG=--enhance"
 set "SAVE_FLAG=--save"
 set "TTA_FLAG=--tta"
@@ -20,10 +20,10 @@ set "MODEL_NAME=YOLOv8 Single Class"
 set "INFERENCE_SCRIPT=inference_yolo.py"
 set "CLASS_CONF_FLAG="
 set "USE_CLASS_CONF=No"
-set "CONF_0=0.15"
-set "CONF_1=0.15"
-set "CONF_2=0.15"
-set "CONF_3=0.15"
+set "CONF_0=0.2"
+set "CONF_1=0.2"
+set "CONF_2=0.2"
+set "CONF_3=0.2"
 
 :MODEL_SELECTION
 cls
