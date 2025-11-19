@@ -1,0 +1,17 @@
+# Core dependencies for crack detection inference
+numpy>=1.21.0,<2.0.0
+opencv-python>=4.5.0,<5.0.0
+Pillow>=8.0.0,<11.0.0
+onnxruntime>=1.12.0,<2.0.0
+
+# Optional: GPU acceleration (uncomment if you have NVIDIA GPU and CUDA installed)
+# onnxruntime-gpu>=1.12.0,<2.0.0
+
+# Note: If using onnxruntime-gpu, comment out the onnxruntime line above
+# You cannot have both onnxruntime and onnxruntime-gpu installed simultaneously
+
+# Optional: For development and analysis
+# pandas>=1.3.0
+# matplotlib>=3.3.0
+# seaborn>=0.11.0
+# tqdm>=4.60.0  # Progress bars for batch processing
