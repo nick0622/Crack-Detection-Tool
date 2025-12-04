@@ -12,9 +12,9 @@ cd /d "%~dp0"
 set "CONFIDENCE=0.2"
 set "ENHANCE_FLAG=--enhance"
 set "SAVE_FLAG=--save"
-set "TTA_FLAG=--tta"
+set "TTA_FLAG="
 set "ENHANCED=Enabled"
-set "TTA=Enabled"
+set "TTA=Disabled"
 set "MODEL_TYPE=yolov8_single"
 set "MODEL_NAME=YOLOv8 Single Class"
 set "INFERENCE_SCRIPT=inference_yolo.py"
@@ -37,10 +37,8 @@ echo 1. 🎯 YOLOv8 Single Class
 echo 2. 🎯 YOLOv8 4 Classes
 echo 3. 🎯 Faster R-CNN
 echo.
-echo ----------------------------------------------------------------
 echo Current Model: %MODEL_NAME%
 echo ----------------------------------------------------------------
-echo.
 set /p model_choice="Enter your choice (1-3): "
 
 if "%model_choice%"=="1" (
@@ -53,6 +51,13 @@ if "%model_choice%"=="2" (
     set "MODEL_TYPE=yolov8_4classes"
     set "MODEL_NAME=YOLOv8 4 Classes"
     set "INFERENCE_SCRIPT=inference_yolo.py"
+    :: 自動啟用 per-class confidence 並設定預設值
+    set "CONF_0=0.3"
+    set "CONF_1=0.2"
+    set "CONF_2=0.3"
+    set "CONF_3=0.5"
+    set "CLASS_CONF_FLAG=--class-confidences 0:0.3,1:0.2,2:0.3,3:0.5"
+    set "USE_CLASS_CONF=Yes"
     goto MENU
 )
 if "%model_choice%"=="3" (
@@ -74,7 +79,26 @@ echo                   ⚙️ Crack Detection Tool Interface ⚙️
 echo ================================================================
 echo.
 echo 🤖 Current Model: %MODEL_NAME%
+echo ⚙️ Current Settings:
+if /i "%USE_CLASS_CONF%"=="Yes" (
+    if "%MODEL_TYPE%"=="yolov8_single" (
+        echo    • Per-Class Confidence:
+        echo       • Class 0 - Crack: 0.2
+    ) else (
+        echo   • Per-Class Confidence:
+        echo      • Transverse:    %CONF_0%
+        echo      • Longitudinal:  %CONF_1%
+        echo      • Joint:         %CONF_2%
+        echo      • Alligator:     %CONF_3%
+    )
+) else (
+    echo   • Per-Class Confidence:  No
+    echo   • Global Confidence:     %CONFIDENCE%
+)
+echo   • Image Enhancement:     %ENHANCED%
+echo   • Test Time Aug (TTA):   %TTA%
 echo.
+echo ----------------------------------------------------------------
 echo Choose your action:
 echo.
 echo 1. 🖼️ Analyze a single image
@@ -135,7 +159,6 @@ if "%MODEL_TYPE%"=="faster_rcnn" (
 )
 
 echo.
-echo ✅ Analysis complete.
 pause
 goto MENU
 
@@ -158,7 +181,6 @@ if "%folder_path%"=="" (
     goto MENU
 )
 
-:: Fix: Remove quotes from the path for proper handling and trim spaces
 set "folder_path=!folder_path:"=!"
 for /f "tokens=*" %%a in ("!folder_path!") do set "folder_path=%%a"
 
@@ -176,7 +198,6 @@ if "%MODEL_TYPE%"=="faster_rcnn" (
 )
 
 echo.
-echo ✅ Analysis complete.
 pause
 goto MENU
 
@@ -190,11 +211,23 @@ echo Current Settings:
 echo ----------------------------------------------------------------
 echo • Model:                 %MODEL_NAME%
 echo • Inference Script:      %INFERENCE_SCRIPT%
-echo • Global Confidence:     %CONFIDENCE%
-echo • Per-Class Confidence:  %USE_CLASS_CONF%
+if /i "%USE_CLASS_CONF%"=="Yes" (
+    if "%MODEL_TYPE%"=="yolov8_single" (
+        echo    • Per-Class Confidence:
+        echo       • Class 0 - Crack: 0.2
+    ) else (
+        echo   • Per-Class Confidence:
+        echo      • Transverse:    %CONF_0%
+        echo      • Longitudinal:  %CONF_1%
+        echo      • Joint:         %CONF_2%
+        echo      • Alligator:     %CONF_3%
+    )
+) else (
+    echo   • Per-Class Confidence:  No
+    echo   • Global Confidence:     %CONFIDENCE%
+)
 echo • Image Enhancement:     %ENHANCED%
 echo • Test Time Aug (TTA):   %TTA%
-echo • Save Results:          Yes
 echo ----------------------------------------------------------------
 echo.
 set /p new_conf="Enter new global confidence (0.0-1.0, leave blank for current): "
