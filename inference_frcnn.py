@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 from PIL import Image
 from preprocess import enhance_image
+from tqdm import tqdm
 
 def check_dependencies():
     missing = []
@@ -95,7 +96,7 @@ class FasterRCNNDetector:
                 return False
             
             print(f"🤖 Model Type: Faster R-CNN (ONNX)")
-            print(f"🔍 Loading model: {onnx_path.name}")
+            # print(f"🔍 Loading model: {onnx_path.name}")
             
             providers = ['CPUExecutionProvider']
             available_providers = ort.get_available_providers()
@@ -111,11 +112,11 @@ class FasterRCNNDetector:
             self.input_name = self.session.get_inputs()[0].name
             self.output_names = [output.name for output in self.session.get_outputs()]
             
-            print(f"🎯 Model outputs: {len(self.output_names)} ({', '.join(self.output_names)})")
+            # print(f"🎯 Model outputs: {len(self.output_names)} ({', '.join(self.output_names)})")
             
             self.load_classes()
             
-            print("✅ Faster R-CNN model loaded successfully")
+            # print("✅ Faster R-CNN model loaded successfully")
             self.model_loaded = True
             return True
             
@@ -133,7 +134,7 @@ class FasterRCNNDetector:
             "2": "joint", 
             "3": "alligator"
         }
-        print(f"📋 Loaded {len(self.class_names)} crack type classes")
+        # print(f"📋 Loaded {len(self.class_names)} crack type classes")
     
     def set_class_confidences(self, class_confidences):
         """
@@ -478,7 +479,7 @@ class FasterRCNNDetector:
                 image = image_path
                 display_path = "image"
             
-            print(f"\n🔍 Analyzing: {Path(display_path).name}")
+            # print(f"\n🔍 Analyzing: {Path(display_path).name}")
             
             orig_shape = image.shape[:2]  # (h, w)
             input_tensor, scale, _ = self.preprocess_image(image)
@@ -510,20 +511,20 @@ class FasterRCNNDetector:
             
             detection_time = time.time() - start_time
             
-            print(f"⚡ Detection completed in {detection_time:.3f} seconds")
+            # print(f"⚡ Detection completed in {detection_time:.3f} seconds")
             
             if detections:
-                print(f"🚨 Found {len(detections)} crack(s):")
+                # print(f"🚨 Found {len(detections)} crack(s):")
                 for i, crack in enumerate(detections, 1):
                     bbox = crack["bbox"]
                     conf_percent = crack["confidence"] * 100
                     crack_type = crack["class_name"]
                     class_id = crack["class_id"]
                     color_name = self.get_class_color_name(class_id)
-                    print(f"   {i}. {crack_type.title()} crack - {conf_percent:.1f}% confidence")
-                    print(f"       Location: ({bbox['x1']:.0f}, {bbox['y1']:.0f}) to ({bbox['x2']:.0f}, {bbox['y2']:.0f})")
-            else:
-                print("✅ No cracks detected in this image")
+                    # print(f"   {i}. {crack_type.title()} crack - {conf_percent:.1f}% confidence")
+                    # print(f"       Location: ({bbox['x1']:.0f}, {bbox['y1']:.0f}) to ({bbox['x2']:.0f}, {bbox['y2']:.0f})")
+            # else:
+                # print("✅ No cracks detected in this image")
             
             if save_results and isinstance(image_path, str):
                 self.save_detection_results(image_path, image, detections)
@@ -648,9 +649,9 @@ class FasterRCNNDetector:
         image_path_result = results_folder / f"{Path(image_path).stem}.jpg"
         cv2.imwrite(str(image_path_result), result_image)
         
-        print(f"💾 Results saved:")
-        print(f"   • LabelMe data: {json_path}")
-        print(f"   • Marked image: {image_path_result}")
+        # print(f"💾 Results saved:")
+        # print(f"   • LabelMe data: {json_path}")
+        # print(f"   • Marked image: {image_path_result}")
 
 def parse_class_confidences(conf_str):
     """
@@ -675,6 +676,8 @@ def parse_class_confidences(conf_str):
         return None
 
 def main():
+    start_time = time.time()
+
     print("🔧 Crack Detection Tool - Faster R-CNN")
     print("=" * 40)
     
@@ -739,16 +742,20 @@ def main():
         if not image_files:
             print(f"❌ No image files found in {input_path}")
         else:
-            print(f"📂 Processing {len(image_files)} images...")
+            print(f"\n📂 Processing {len(image_files)} images...")
             
             total_cracks = 0
             images_with_cracks = 0
+            start_batch = time.time()
             
-            for image_file in sorted(image_files):
+            pbar = tqdm(sorted(image_files), desc="Processing", unit="img")
+            
+            for image_file in pbar:
                 detections = detector.detect_cracks(str(image_file), args.confidence, args.save)
                 if detections:
                     total_cracks += len(detections)
                     images_with_cracks += 1
+            batch_time = time.time() - start_batch
             
             print(f"\n📊 Summary:")
             print(f"   • Images processed: {len(image_files)}")
@@ -756,11 +763,20 @@ def main():
             print(f"   • Total cracks found: {total_cracks}")
             if len(image_files) > 0:
                 print(f"   • Average cracks per image: {total_cracks/len(image_files):.1f}")
+                print(f"   • Processing time: {batch_time:.2f}s")  # ← 新增
+                print(f"   • Average time per image: {batch_time/len(image_files):.2f}s")
     
     else:
         print(f"❌ Path not found: {input_path}")
     
     print("\n✅ Detection completed!")
+    total_time = time.time() - start_time
+    minutes = int(total_time // 60)
+    seconds = total_time % 60
+    if minutes > 0:
+        print(f"⏱️  Total execution time: {minutes}m {seconds:.1f}s")
+    else:
+        print(f"⏱️  Total execution time: {seconds:.1f}s")
 
 if __name__ == "__main__":
     main()

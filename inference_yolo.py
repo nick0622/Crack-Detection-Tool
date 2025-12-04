@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 from PIL import Image
 from preprocess import enhance_image
+from tqdm import tqdm
 
 def check_dependencies():
     missing = []
@@ -49,7 +50,7 @@ class CrackDetector:
                 - "yolov8_single": YOLOv8 Single Class
                 - "yolov8_4classes": YOLOv8 4 Classes
             enhance_images: Whether to apply image enhancement
-            use_tta: Whether to use Test Time Augmentation
+            use_tta: Whether to use Test Time Augmentation (multi-scale)
         """
         self.session = None
         self.input_name = None
@@ -60,24 +61,23 @@ class CrackDetector:
         self.enhance_images = enhance_images
         self.model_type = model_type
         self.use_tta = use_tta
-        self.class_confidences = {}  # Per-class confidence thresholds
+        self.class_confidences = {}
         self.load_model()
     
     def get_model_path(self):
         """Get the correct model path based on model_type"""
         model_folder = Path("model")
         
-        # Map model types to file names
         model_mapping = {
             "yolov8_single": "yolov8_single.onnx",
-            "yolov8_4classes": "yolov8_multi.onnx",}
+            "yolov8_4classes": "yolov8_multi.onnx",  # Dynamic size model
+        }
         
         model_filename = model_mapping.get(self.model_type)
         
         if model_filename is None:
             print(f"⚠️ Unknown model type: {self.model_type}")
             print(f"   Available types: {', '.join(model_mapping.keys())}")
-            # Fallback to first available model
             onnx_files = list(model_folder.glob("*.onnx"))
             if onnx_files:
                 return onnx_files[0]
@@ -88,7 +88,6 @@ class CrackDetector:
         if not model_path.exists():
             print(f"⚠️ Model file not found: {model_path}")
             print(f"   Looking for alternative models...")
-            # Fallback to first available model
             onnx_files = list(model_folder.glob("*.onnx"))
             if onnx_files:
                 print(f"   Using: {onnx_files[0].name}")
@@ -109,7 +108,7 @@ class CrackDetector:
                 return False
             
             print(f"🤖 Model Type: {self.model_type}")
-            print(f"🔍 Loading model: {onnx_path.name}")
+            # print(f"🔍 Loading model: {onnx_path.name}")
             
             providers = ['CPUExecutionProvider']
             available_providers = ort.get_available_providers()
@@ -126,12 +125,12 @@ class CrackDetector:
             self.input_shape = self.session.get_inputs()[0].shape
             self.output_names = [output.name for output in self.session.get_outputs()]
             
-            print(f"📏 Model input shape: {self.input_shape}")
-            print(f"🎯 Model outputs: {len(self.output_names)}")
+            # print(f"📏 Model input shape: {self.input_shape}")
+            # print(f"🎯 Model outputs: {len(self.output_names)}")
             
             self.load_classes()
             
-            print("✅ Crack detection model loaded successfully")
+            # print("✅ Crack detection model loaded successfully")
             self.model_loaded = True
             return True
             
@@ -145,21 +144,17 @@ class CrackDetector:
         """Load class names from classes.json or use defaults based on model type"""
         classes_path = Path("model/classes.json")
         
-        # 根據模型類型決定是否載入 classes.json
         if self.model_type == "yolov8_single":
-            # Single class 模型強制使用單一類別
             self.class_names = {"0": "crack"}
             print("📋 Using single class: crack")
         else:
-            # Multi-class 模型才嘗試載入 classes.json
             if classes_path.exists():
                 try:
                     with open(classes_path, 'r') as f:
                         self.class_names = json.load(f)
-                    print(f"📋 Loaded {len(self.class_names)} class names from classes.json")
+                    # print(f"📋 Loaded {len(self.class_names)} class names from classes.json")
                 except Exception as e:
                     print(f"⚠️ Could not load classes.json: {e}")
-                    # 使用預設的 4 類別
                     self.class_names = {
                         "0": "transverse", 
                         "1": "longitudinal", 
@@ -168,7 +163,6 @@ class CrackDetector:
                     }
                     print("📋 Using default 4 crack type classes")
             else:
-                # 如果沒有 classes.json，使用預設的 4 類別
                 self.class_names = {
                     "0": "transverse", 
                     "1": "longitudinal", 
@@ -178,48 +172,33 @@ class CrackDetector:
                 print("📋 Using default 4 crack type classes")
     
     def set_class_confidences(self, class_confidences):
-        """
-        Set per-class confidence thresholds
-        
-        Args:
-            class_confidences: dict mapping class_id (int or str) to confidence threshold (float)
-                              Example: {0: 0.3, 1: 0.25, 2: 0.2, 3: 0.35}
-                              or {"transverse": 0.3, "longitudinal": 0.25}
-        """
+        """Set per-class confidence thresholds"""
         self.class_confidences = {}
         for key, value in class_confidences.items():
             if isinstance(key, str) and not key.isdigit():
-                # Convert class name to class id
                 for class_id, class_name in self.class_names.items():
                     if class_name.lower() == key.lower():
                         self.class_confidences[int(class_id)] = float(value)
                         break
             else:
                 self.class_confidences[int(key)] = float(value)
-        
-        if self.class_confidences:
-            print("🎯 Per-class confidence thresholds:")
-            for class_id, conf in self.class_confidences.items():
-                class_name = self.class_names.get(str(class_id), f"class_{class_id}")
-                print(f"   • {class_name.title()}: {conf:.2f}")
-    
     def get_class_color(self, class_id):
-        """Get BGR color for each crack type (for OpenCV)"""
+        """Get BGR color for each crack type"""
         class_colors = {
-            0: (255, 0, 0),      # Blue for transverse/crack
-            1: (255, 220, 100),  # Light blue for longitudinal
-            2: (255, 255, 255),  # White for joint
-            3: (240, 250, 100),  # Light cyan for alligator
+            0: (255, 0, 0),
+            1: (255, 220, 100),
+            2: (255, 255, 255),
+            3: (240, 250, 100),
         }
-        return class_colors.get(class_id, (128, 128, 128))   # Default gray
+        return class_colors.get(class_id, (128, 128, 128))
     
     def get_class_color_name(self, class_id):
         """Get color name for display"""
         color_names = {
-            0: "blue",              # Transverse/crack
-            1: "Blue",              # Longitudinal  
-            2: "white",             # Joint
-            3: "lightseagreen",     # Alligator
+            0: "blue",
+            1: "Blue",
+            2: "white",
+            3: "lightseagreen",
         }
         return color_names.get(class_id, "Gray")
     
@@ -232,168 +211,44 @@ class CrackDetector:
         print()
     
     def preprocess_image(self, image):
-        """Prepare image for YOLOv8 ONNX model with proper aspect ratio preservation"""
+        """
+        Prepare image for YOLOv8 ONNX model with dynamic size
+        Matches Ultralytics preprocessing
+        """
         if isinstance(image, Image.Image):
             image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
         
-        # Use the imported enhancement function
+        # Optional image enhancement
         image = enhance_image(image, self.enhance_images)
         
         original_height, original_width = image.shape[:2]
         
-        if self.input_shape and len(self.input_shape) >= 4:
-            input_size = self.input_shape[2]
-        else:
-            input_size = 1024  # Standard YOLOv8 input size
+        # Dynamic sizing with stride alignment
+        imgsz = 1024
+        stride = 32
+        scale = min(imgsz / original_height, imgsz / original_width)
         
-        scale = min(input_size / original_width, input_size / original_height)
-        new_width = int(original_width * scale)
-        new_height = int(original_height * scale)
+        # Calculate aligned dimensions
+        new_width = int(np.ceil(original_width * scale / stride) * stride)
+        new_height = int(np.ceil(original_height * scale / stride) * stride)
         
-        # Resize image maintaining aspect ratio
+        # Resize
         resized = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
         
-        # Create padded image with gray background
-        padded = np.full((input_size, input_size, 3), 114, dtype=np.uint8)
+        # BGR -> RGB
+        resized_rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         
-        # Center the resized image in the padded canvas
-        y_offset = (input_size - new_height) // 2
-        x_offset = (input_size - new_width) // 2
-        padded[y_offset:y_offset + new_height, x_offset:x_offset + new_width] = resized
+        # Normalize
+        input_image = resized_rgb.astype(np.float32) / 255.0
         
-        # Normalize and prepare for model
-        input_image = padded.astype(np.float32) / 255.0
-        input_image = np.transpose(input_image, (2, 0, 1))  # HWC to CHW
-        input_image = np.expand_dims(input_image, axis=0)   # Add batch dimension
+        # HWC -> CHW
+        input_image = np.transpose(input_image, (2, 0, 1))
         
-        return input_image, scale, x_offset, y_offset
-    
-    def apply_tta_transforms(self, input_image):
-        """
-        Apply Test Time Augmentation transforms
-        Returns list of (transformed_image, transform_info) tuples
-        """
-        transforms = []
+        # Add batch dimension
+        input_image = np.expand_dims(input_image, axis=0)
         
-        # Original image
-        transforms.append((input_image, {'type': 'original'}))
-        
-        # Horizontal flip
-        flipped_h = input_image[:, :, :, ::-1].copy()
-        transforms.append((flipped_h, {'type': 'flip_h'}))
-        
-        # Vertical flip
-        flipped_v = input_image[:, :, ::-1, :].copy()
-        transforms.append((flipped_v, {'type': 'flip_v'}))
-        
-        # Both flips (180 degree rotation)
-        flipped_both = input_image[:, :, ::-1, ::-1].copy()
-        transforms.append((flipped_both, {'type': 'flip_both'}))
-        
-        return transforms
-    
-    def reverse_tta_transform(self, detections, transform_info, img_width, img_height):
-        """
-        Reverse the TTA transform applied to bounding boxes
-        """
-        transform_type = transform_info['type']
-        
-        if transform_type == 'original':
-            return detections
-        
-        reversed_detections = []
-        for det in detections:
-            bbox = det['bbox'].copy()
-            x1, y1, x2, y2 = bbox['x1'], bbox['y1'], bbox['x2'], bbox['y2']
-            
-            if transform_type == 'flip_h':
-                # Reverse horizontal flip
-                bbox['x1'] = img_width - x2
-                bbox['x2'] = img_width - x1
-            
-            elif transform_type == 'flip_v':
-                # Reverse vertical flip
-                bbox['y1'] = img_height - y2
-                bbox['y2'] = img_height - y1
-            
-            elif transform_type == 'flip_both':
-                # Reverse both flips
-                bbox['x1'] = img_width - x2
-                bbox['x2'] = img_width - x1
-                bbox['y1'] = img_height - y2
-                bbox['y2'] = img_height - y1
-            
-            reversed_det = det.copy()
-            reversed_det['bbox'] = bbox
-            reversed_detections.append(reversed_det)
-        
-        return reversed_detections
-    
-    def merge_tta_detections(self, all_detections, iou_threshold=0.5):
-        """
-        Merge detections from multiple TTA transforms using Weighted Boxes Fusion
-        """
-        if not all_detections:
-            return []
-        
-        # Convert to format for NMS: [x1, y1, x2, y2]
-        boxes = []
-        scores = []
-        labels = []
-        
-        for det in all_detections:
-            bbox = det['bbox']
-            boxes.append([bbox['x1'], bbox['y1'], bbox['x2'], bbox['y2']])
-            scores.append(det['confidence'])
-            labels.append(det['class_id'])
-        
-        boxes = np.array(boxes)
-        scores = np.array(scores)
-        labels = np.array(labels)
-        
-        # Group by class
-        unique_labels = np.unique(labels)
-        merged_detections = []
-        
-        for label in unique_labels:
-            mask = labels == label
-            class_boxes = boxes[mask]
-            class_scores = scores[mask]
-            
-            if len(class_boxes) == 0:
-                continue
-            
-            # Apply NMS
-            indices = cv2.dnn.NMSBoxes(
-                class_boxes.tolist(),
-                class_scores.tolist(),
-                0.0,  # No score threshold here (already filtered)
-                iou_threshold
-            )
-            
-            if len(indices) > 0:
-                if isinstance(indices, tuple):
-                    indices = indices[0]
-                if hasattr(indices, 'flatten'):
-                    indices = indices.flatten()
-                
-                for i in indices:
-                    class_name = self.class_names.get(str(int(label)), f"class_{int(label)}")
-                    
-                    detection = {
-                        "bbox": {
-                            "x1": float(class_boxes[i][0]),
-                            "y1": float(class_boxes[i][1]),
-                            "x2": float(class_boxes[i][2]),
-                            "y2": float(class_boxes[i][3])
-                        },
-                        "confidence": float(class_scores[i]),
-                        "class_id": int(label),
-                        "class_name": class_name
-                    }
-                    merged_detections.append(detection)
-        
-        return merged_detections
+        # No padding offsets for dynamic sizing
+        return input_image, scale, 0, 0
     
     def postprocess_results(self, outputs, scale, x_offset, y_offset, conf_threshold=0.2):
         detections = []
@@ -406,17 +261,17 @@ class CrackDetector:
         if output.shape[0] < output.shape[1]:
             output = output.T  # Now [num_detections, 4+num_classes]
         
-        boxes = output[:, :4]  # x_center, y_center, width, height (relative to input size)
-        scores = output[:, 4:]  # confidence scores for each class
+        boxes = output[:, :4]  # xywh (model input size)
+        scores = output[:, 4:]  # class scores
         
         class_ids = np.argmax(scores, axis=1)
         confidences = np.max(scores, axis=1)
         
-        # Apply per-class confidence thresholds if available
+        # Apply per-class confidence thresholds
+        # (此處會保留所有通過各自閾值的框，讓 NMS 處理最終的重疊)
         if self.class_confidences:
             valid_detections = np.zeros(len(confidences), dtype=bool)
             for i, (class_id, conf) in enumerate(zip(class_ids, confidences)):
-                # Get class-specific threshold, or use default if not specified
                 class_threshold = self.class_confidences.get(int(class_id), conf_threshold)
                 valid_detections[i] = conf > class_threshold
         else:
@@ -427,55 +282,169 @@ class CrackDetector:
             confidences = confidences[valid_detections]
             class_ids = class_ids[valid_detections]
             
+            # 1. Convert model output (xywh) to model input XYXY
             x_centers, y_centers, widths, heights = boxes.T
-            x1 = x_centers - widths / 2
-            y1 = y_centers - heights / 2
-            x2 = x_centers + widths / 2
-            y2 = y_centers + heights / 2
-            
-            # Transform coordinates back to original image space
-            x1 = (x1 - x_offset) / scale
-            y1 = (y1 - y_offset) / scale
-            x2 = (x2 - x_offset) / scale
-            y2 = (y2 - y_offset) / scale
+            x1_model = x_centers - widths / 2
+            y1_model = y_centers - heights / 2
+            x2_model = x_centers + widths / 2
+            y2_model = y_centers + heights / 2
+
+            # 2. Transform to Original Image XYXY space
+            x1_orig = (x1_model - x_offset) / scale
+            y1_orig = (y1_model - y_offset) / scale
+            x2_orig = (x2_model - x_offset) / scale
+            y2_orig = (y2_model - y_offset) / scale
             
             # Ensure coordinates are valid
-            x1 = np.maximum(0, x1)
-            y1 = np.maximum(0, y1)
+            x1_orig = np.maximum(0, x1_orig)
+            y1_orig = np.maximum(0, y1_orig)
             
-            boxes_for_nms = np.column_stack([x1, y1, x2, y2])
+            # 3. Class-Agnostic NMS (使用您驗證過可行的 XYXY 格式)
+            boxes_for_nms = np.column_stack([x1_orig, y1_orig, x2_orig, y2_orig]).astype(np.float32)
+            confidences_f32 = confidences.astype(np.float32)
+            
             indices = cv2.dnn.NMSBoxes(
                 boxes_for_nms.tolist(),
-                confidences.tolist(),
-                0.0,  # We already filtered by confidence
-                0.3
+                confidences_f32.tolist(),
+                0.0,
+                0.2
             )
             
             if len(indices) > 0:
-                # Handle different return types from NMSBoxes
+                # Handle NMS return types
                 if isinstance(indices, tuple):
                     indices = indices[0]
                 if hasattr(indices, 'flatten'):
                     indices = indices.flatten()
                 
+                # Process final NMS results
                 for i in indices:
                     class_id = int(class_ids[i])
                     class_name = self.class_names.get(str(class_id), f"class_{class_id}")
                     
                     detection = {
                         "bbox": {
-                            "x1": max(0, float(x1[i])),
-                            "y1": max(0, float(y1[i])),
-                            "x2": float(x2[i]),
-                            "y2": float(y2[i])
+                            "x1": float(x1_orig[i]),
+                            "y1": float(y1_orig[i]),
+                            "x2": float(x2_orig[i]),
+                            "y2": float(y2_orig[i])
                         },
                         "confidence": float(confidences[i]),
                         "class_id": class_id,
                         "class_name": class_name
                     }
                     detections.append(detection)
-        
+                    
         return detections
+    
+    def _calc_iou_boxes(self, box1, box2):
+        """Calculate IoU between two boxes"""
+        x1_1, y1_1, x2_1, y2_1 = box1
+        x1_2, y1_2, x2_2, y2_2 = box2
+        
+        inter_x1 = max(x1_1, x1_2)
+        inter_y1 = max(y1_1, y1_2)
+        inter_x2 = min(x2_1, x2_2)
+        inter_y2 = min(y2_1, y2_2)
+        
+        inter_area = max(0, inter_x2 - inter_x1) * max(0, inter_y2 - inter_y1)
+        
+        box1_area = (x2_1 - x1_1) * (y2_1 - y1_1)
+        box2_area = (x2_2 - x1_2) * (y2_2 - y1_2)
+        union_area = box1_area + box2_area - inter_area
+        
+        return inter_area / union_area if union_area > 0 else 0
+    
+    def _merge_multiscale_detections(self, all_detections, img_width, img_height, iou_threshold=0.6):
+        """
+        Merge detections from multiple scales using Weighted Boxes Fusion
+        """
+        if not all_detections:
+            return []
+        
+        # Group by class
+        class_groups = {}
+        for det in all_detections:
+            cls_id = det['class_id']
+            if cls_id not in class_groups:
+                class_groups[cls_id] = []
+            class_groups[cls_id].append(det)
+        
+        final_detections = []
+        
+        for cls_id, group in class_groups.items():
+            if len(group) == 0:
+                continue
+            
+            # Extract boxes and scores
+            boxes = np.array([
+                [d['bbox']['x1'], d['bbox']['y1'], d['bbox']['x2'], d['bbox']['y2']] 
+                for d in group
+            ])
+            scores = np.array([d['confidence'] for d in group])
+            
+            # Sort by confidence
+            order = np.argsort(scores)[::-1]
+            boxes = boxes[order]
+            scores = scores[order]
+            
+            # WBF-style merging
+            keep = []
+            processed = np.zeros(len(boxes), dtype=bool)
+            
+            for i in range(len(boxes)):
+                if processed[i]:
+                    continue
+                
+                current_box = boxes[i]
+                current_score = scores[i]
+                
+                # Collect overlapping boxes
+                overlapping_boxes = [current_box]
+                overlapping_scores = [current_score]
+                processed[i] = True
+                
+                for j in range(i + 1, len(boxes)):
+                    if processed[j]:
+                        continue
+                    
+                    iou = self._calc_iou_boxes(current_box, boxes[j])
+                    
+                    if iou > iou_threshold:
+                        overlapping_boxes.append(boxes[j])
+                        overlapping_scores.append(scores[j])
+                        processed[j] = True
+                
+                # Fuse overlapping boxes
+                if len(overlapping_boxes) > 1:
+                    overlapping_boxes = np.array(overlapping_boxes)
+                    overlapping_scores = np.array(overlapping_scores)
+                    
+                    # Weighted average by confidence
+                    weights = overlapping_scores / overlapping_scores.sum()
+                    fused_box = np.average(overlapping_boxes, axis=0, weights=weights)
+                    fused_score = overlapping_scores.max()
+                    
+                    keep.append({'box': fused_box, 'score': fused_score})
+                else:
+                    keep.append({'box': current_box, 'score': current_score})
+            
+            # Add to final results
+            class_name = self.class_names.get(str(cls_id), f"class_{cls_id}")
+            for item in keep:
+                final_detections.append({
+                    "bbox": {
+                        "x1": max(0, float(item['box'][0])),
+                        "y1": max(0, float(item['box'][1])),
+                        "x2": min(img_width, float(item['box'][2])),
+                        "y2": min(img_height, float(item['box'][3]))
+                    },
+                    "confidence": float(item['score']),
+                    "class_id": int(cls_id),
+                    "class_name": class_name
+                })
+        
+        return final_detections
     
     def detect_cracks(self, image_path, confidence=0.25, save_results=False):
         """Detect cracks in an image"""
@@ -495,50 +464,93 @@ class CrackDetector:
                 image = image_path
                 display_path = "image"
             
-            print(f"\n🔍 Analyzing: {Path(display_path).name}")
+            # print(f"\n🔍 Analyzing: {Path(display_path).name}")
             
             img_height, img_width = image.shape[:2]
-            input_image, scale, x_offset, y_offset = self.preprocess_image(image)
             
             start_time = time.time()
             
             if self.use_tta:
-                # Get TTA transforms
-                transforms = self.apply_tta_transforms(input_image)
+                # Multi-scale TTA (matching Ultralytics: 1.0, 0.83, 0.67)
+                scales = [1.0, 0.83, 0.67]
+                # print(f"🔄 Using Multi-Scale TTA ({len(scales)} scales: {scales})...")
+                
                 all_detections = []
                 
-                # Run inference on each transform
-                for idx, (transformed_img, transform_info) in enumerate(transforms):
-                    outputs = self.session.run(self.output_names, {self.input_name: transformed_img})
-                    detections = self.postprocess_results(outputs, scale, x_offset, y_offset, confidence)
+                for scale_factor in scales:
+                    # Scale image
+                    if scale_factor != 1.0:
+                        scaled_h = int(img_height * scale_factor)
+                        scaled_w = int(img_width * scale_factor)
+                        scaled_image = cv2.resize(
+                            image, 
+                            (scaled_w, scaled_h), 
+                            interpolation=cv2.INTER_LINEAR
+                        )
+                    else:
+                        scaled_image = image
                     
-                    # Reverse transform on bounding boxes
-                    reversed_detections = self.reverse_tta_transform(detections, transform_info, img_width, img_height)
-                    all_detections.extend(reversed_detections)
-                                    
-                # Merge detections from all transforms
-                detections = self.merge_tta_detections(all_detections, iou_threshold=0.5)
+                    # Preprocess
+                    input_tensor, scale, x_offset, y_offset = self.preprocess_image(scaled_image)
+                    
+                    # Inference
+                    outputs = self.session.run(
+                        self.output_names, 
+                        {self.input_name: input_tensor}
+                    )
+                    
+                    # Postprocess
+                    detections = self.postprocess_results(
+                        outputs, scale, x_offset, y_offset, confidence
+                    )
+                    
+                    # Transform coordinates back to original image size
+                    if scale_factor != 1.0:
+                        for det in detections:
+                            det['bbox']['x1'] /= scale_factor
+                            det['bbox']['y1'] /= scale_factor
+                            det['bbox']['x2'] /= scale_factor
+                            det['bbox']['y2'] /= scale_factor
+                    
+                    # print(f"   Scale {scale_factor:.2f}x: {len(detections)} detections")
+                    all_detections.extend(detections)
+                
+                # print(f"   Total before merging: {len(all_detections)} detections")
+                
+                # Merge multi-scale detections
+                detections = self._merge_multiscale_detections(
+                    all_detections,
+                    img_width,
+                    img_height,
+                    iou_threshold=0.5
+                )
+                
+                # print(f"   After merging: {len(detections)} final detections")
             else:
-                # Standard inference without TTA
-                outputs = self.session.run(self.output_names, {self.input_name: input_image})
-                detections = self.postprocess_results(outputs, scale, x_offset, y_offset, confidence)
+                # Standard inference
+                input_image, scale, x_offset, y_offset = self.preprocess_image(image)
+                outputs = self.session.run(
+                    self.output_names, 
+                    {self.input_name: input_image}
+                )
+                detections = self.postprocess_results(
+                    outputs, scale, x_offset, y_offset, confidence
+                )
             
             detection_time = time.time() - start_time
             
-            print(f"⚡ Detection completed in {detection_time:.3f} seconds")
+            # print(f"⚡ Detection completed in {detection_time:.3f} seconds")
             
             if detections:
-                print(f"🚨 Found {len(detections)} crack(s):")
+                # print(f"🚨 Found {len(detections)} crack(s):")
                 for i, crack in enumerate(detections, 1):
                     bbox = crack["bbox"]
                     conf_percent = crack["confidence"] * 100
                     crack_type = crack["class_name"]
-                    class_id = crack["class_id"]
-                    color_name = self.get_class_color_name(class_id)
-                    print(f"   {i}. {crack_type.title()} crack - {conf_percent:.1f}% confidence")
-                    print(f"       Location: ({bbox['x1']:.0f}, {bbox['y1']:.0f}) to ({bbox['x2']:.0f}, {bbox['y2']:.0f})")
-            else:
-                print("✅ No cracks detected in this image")
+                    # print(f"   {i}. {crack_type.title()} crack - {conf_percent:.1f}% confidence")
+                    # print(f"       Location: ({bbox['x1']:.0f}, {bbox['y1']:.0f}) to ({bbox['x2']:.0f}, {bbox['y2']:.0f})")
+            # else:
+                # print("✅ No cracks detected in this image")
             
             if save_results and isinstance(image_path, str):
                 self.save_detection_results(image_path, image, detections)
@@ -552,13 +564,7 @@ class CrackDetector:
             return []
     
     def save_detection_results(self, image_path, image, detections):
-        """
-        Save detection results in LabelMe format.
-        
-        This function now creates a JSON file that can be opened and
-        edited with the LabelMe annotation tool. It also saves the
-        annotated image for visual reference.
-        """
+        """Save detection results in LabelMe format"""
         results_folder = Path("results")
         results_folder.mkdir(exist_ok=True)
         
@@ -569,7 +575,7 @@ class CrackDetector:
             "flags": {},
             "shapes": [],
             "imagePath": image_name,
-            "imageData": None,  # Set to null for file path mode
+            "imageData": None,
             "imageHeight": image.shape[0],
             "imageWidth": image.shape[1]
         }
@@ -589,7 +595,6 @@ class CrackDetector:
                 "group_id": None,
                 "shape_type": "rectangle",
                 "flags": {},
-                # Add confidence as a description for reference
                 "description": f"Confidence: {detection['confidence']:.2f}"
             }
             labelme_data["shapes"].append(shape)
@@ -650,31 +655,24 @@ class CrackDetector:
             if text_x + label_width > img_width:
                 text_x = max(padding, img_width - label_width - padding)
             
-            # 如果超出下邊界
             if text_y > img_height:
                 text_y = img_height - padding
             
-            # 最終邊界檢查
             text_x = int(np.clip(text_x, 0, img_width - 1))
             text_y = int(np.clip(text_y, label_height, img_height - 1))
             
-            # Draw text
             cv2.putText(result_image, label, (text_x, text_y), 
                         cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, font_thickness)
         
-        # Save marked image
         image_path_result = results_folder / f"{Path(image_path).stem}.jpg"
         cv2.imwrite(str(image_path_result), result_image)
         
-        print(f"💾 Results saved:")
-        print(f"   • LabelMe data: {json_path}")
-        print(f"   • Marked image: {image_path_result}")
+        # print(f"💾 Results saved")
+        # print(f"   • LabelMe data: {json_path}")
+        # print(f"   • Marked image: {image_path_result}")
 
 def parse_class_confidences(conf_str):
-    """
-    Parse class-specific confidence string
-    Format: "0:0.3,1:0.25,2:0.2,3:0.35" or "transverse:0.3,longitudinal:0.25"
-    """
+    """Parse class-specific confidence string"""
     if not conf_str:
         return None
     
@@ -693,6 +691,8 @@ def parse_class_confidences(conf_str):
         return None
 
 def main():
+    start_time = time.time()
+
     print("🔧 Crack Detection Tool")
     print("=" * 40)
     
@@ -707,10 +707,10 @@ def main():
     parser.add_argument("--enhance", "-e", action="store_true",
                         help="Apply image enhancement preprocessing")
     parser.add_argument("--model", "-m", type=str, default="yolov8_single",
-                        choices=["yolov8_single", "yolov8_4classes", "faster_rcnn"],
+                        choices=["yolov8_single", "yolov8_4classes"],
                         help="Model type to use (default: yolov8_single)")
     parser.add_argument("--tta", "-t", action="store_true",
-                        help="Use Test Time Augmentation (slower but more accurate)")
+                        help="Use Multi-Scale Test Time Augmentation (slower but more accurate)")
     
     args = parser.parse_args()
     
@@ -723,7 +723,6 @@ def main():
     
     detector = CrackDetector(model_type=args.model, enhance_images=args.enhance, use_tta=args.tta)
     
-    # Set per-class confidences if provided
     if args.class_confidences:
         class_confs = parse_class_confidences(args.class_confidences)
         if class_confs:
@@ -736,11 +735,21 @@ def main():
         print("   • Use --enhance to enable preprocessing")
     
     if args.tta:
-        print("🔄 Test Time Augmentation: ENABLED")
-        print("   • Using 4 transforms (original + flips)")
+        print("🔄 Multi-Scale TTA: ENABLED")
+        # print("   • Using 3 scales (1.0x, 0.83x, 0.67x)")
     else:
-        print("🔄 Test Time Augmentation: DISABLED")
-        print("   • Use --tta to enable TTA for better accuracy")
+        print("🔄 Multi-Scale TTA: DISABLED")
+        print("   • Use --tta to enable for better accuracy")
+
+    if args.class_confidences:
+        print("🎯 Per-Class Confidence")
+        if detector.class_confidences:
+            for class_id, conf in detector.class_confidences.items():
+                class_name = detector.class_names.get(str(class_id), f"Class {class_id}")
+                print(f"   • {class_name.title()}: {conf:.2f}")
+    else:
+        print(f"Global Confidence")
+        print(f"   • Threshold: {args.confidence:.2f}")
     
     input_path = Path(args.input)
     
@@ -758,28 +767,40 @@ def main():
         if not image_files:
             print(f"❌ No image files found in {input_path}")
         else:
-            print(f"📂 Processing {len(image_files)} images...")
+            print(f"📂 Processing {len(image_files)} images...\n")
             
             total_cracks = 0
             images_with_cracks = 0
+            start_batch = time.time()
             
-            for image_file in sorted(image_files):
+            pbar = tqdm(sorted(image_files), desc="Processing", unit="img")
+            for image_file in pbar:
                 detections = detector.detect_cracks(str(image_file), args.confidence, args.save)
                 if detections:
                     total_cracks += len(detections)
                     images_with_cracks += 1
-            
+            batch_time = time.time() - start_batch
+
             print(f"\n📊 Summary:")
             print(f"   • Images processed: {len(image_files)}")
             print(f"   • Images with cracks: {images_with_cracks}")
             print(f"   • Total cracks found: {total_cracks}")
             if len(image_files) > 0:
                 print(f"   • Average cracks per image: {total_cracks/len(image_files):.1f}")
+                print(f"   • Processing time: {batch_time:.2f}s")  # ← 新增
+                print(f"   • Average time per image: {batch_time/len(image_files):.2f}s")
     
     else:
         print(f"❌ Path not found: {input_path}")
     
     print("\n✅ Detection completed!")
+    total_time = time.time() - start_time
+    minutes = int(total_time // 60)
+    seconds = total_time % 60
+    if minutes > 0:
+        print(f"⏱️  Total execution time: {minutes}m {seconds:.1f}s")
+    else:
+        print(f"⏱️  Total execution time: {seconds:.1f}s")
 
 if __name__ == "__main__":
     main()
