@@ -52,11 +52,11 @@ if "%model_choice%"=="2" (
     set "MODEL_NAME=YOLOv8 4 Classes"
     set "INFERENCE_SCRIPT=inference_yolo.py"
     :: 自動啟用 per-class confidence 並設定預設值
-    set "CONF_0=0.3"
-    set "CONF_1=0.2"
-    set "CONF_2=0.3"
-    set "CONF_3=0.5"
-    set "CLASS_CONF_FLAG=--class-confidences 0:0.3,1:0.2,2:0.3,3:0.5"
+    set "CONF_0=0.45"
+    set "CONF_1=0.3"
+    set "CONF_2=0.15"
+    set "CONF_3=0.4"
+    set "CLASS_CONF_FLAG=--class-confidences 0:0.45,1:0.3,2:0.15,3:0.4"
     set "USE_CLASS_CONF=Yes"
     goto MENU
 )

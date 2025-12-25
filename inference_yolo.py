@@ -212,43 +212,47 @@ class CrackDetector:
     
     def preprocess_image(self, image):
         """
-        Prepare image for YOLOv8 ONNX model with dynamic size
-        Matches Ultralytics preprocessing
+        Modified: Standard YOLOv8 Letterbox preprocessing
         """
         if isinstance(image, Image.Image):
             image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
         
-        # Optional image enhancement
+        # Optional enhancement
         image = enhance_image(image, self.enhance_images)
         
-        original_height, original_width = image.shape[:2]
+        # 取得原圖尺寸
+        shape = image.shape[:2]  # [height, width]
+        new_shape = (1024, 1024) # 目標尺寸 (YOLOv8 預設)
         
-        # Dynamic sizing with stride alignment
-        imgsz = 1024
-        stride = 32
-        scale = min(imgsz / original_height, imgsz / original_width)
+        # 1. 計算縮放比例 (取最小比例，確保整張圖都塞得進去)
+        r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
         
-        # Calculate aligned dimensions
-        new_width = int(np.ceil(original_width * scale / stride) * stride)
-        new_height = int(np.ceil(original_height * scale / stride) * stride)
+        # 2. 計算 Padding (灰邊)
+        new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
+        dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]  # wh padding
         
-        # Resize
-        resized = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
+        # 把 Padding 分給左右/上下兩邊 (置中)
+        dw /= 2  
+        dh /= 2
         
-        # BGR -> RGB
-        resized_rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+        # 3. Resize
+        if shape[::-1] != new_unpad:  
+            image = cv2.resize(image, new_unpad, interpolation=cv2.INTER_LINEAR)
+            
+        top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
+        left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
         
-        # Normalize
-        input_image = resized_rgb.astype(np.float32) / 255.0
+        # 4. 填補灰邊 (色碼 114)
+        image = cv2.copyMakeBorder(image, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(114, 114, 114))
         
-        # HWC -> CHW
+        # 5. 標準化與轉置 (HWC -> CHW, 0-255 -> 0.0-1.0)
+        input_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        input_image = input_image.astype(np.float32) / 255.0
         input_image = np.transpose(input_image, (2, 0, 1))
-        
-        # Add batch dimension
         input_image = np.expand_dims(input_image, axis=0)
         
-        # No padding offsets for dynamic sizing
-        return input_image, scale, 0, 0
+        # 回傳: 影像, 縮放比, X偏移量(padding), Y偏移量(padding)
+        return input_image, r, left, top
     
     def postprocess_results(self, outputs, scale, x_offset, y_offset, conf_threshold=0.2):
         detections = []
@@ -307,7 +311,7 @@ class CrackDetector:
                 boxes_for_nms.tolist(),
                 confidences_f32.tolist(),
                 0.0,
-                0.2
+                0.35
             )
             
             if len(indices) > 0:
