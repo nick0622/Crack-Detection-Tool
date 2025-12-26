@@ -54,9 +54,9 @@ if "%model_choice%"=="2" (
     :: 自動啟用 per-class confidence 並設定預設值
     set "CONF_0=0.45"
     set "CONF_1=0.3"
-    set "CONF_2=0.15"
+    set "CONF_2=0.2"
     set "CONF_3=0.4"
-    set "CLASS_CONF_FLAG=--class-confidences 0:0.45,1:0.3,2:0.15,3:0.4"
+    set "CLASS_CONF_FLAG=--class-confidences 0:0.45,1:0.3,2:0.2,3:0.4"
     set "USE_CLASS_CONF=Yes"
     goto MENU
 )
