@@ -41,7 +41,7 @@ def check_dependencies():
     return True
 
 class CrackDetector:
-    def __init__(self, model_type="yolov8_single", enhance_images=False, use_tta=False):
+    def __init__(self, model_type="yolov8_single", enhance_images=False, use_tta=False, use_tiling=False):
         """
         Initialize crack detector
         
@@ -51,6 +51,7 @@ class CrackDetector:
                 - "yolov8_4classes": YOLOv8 4 Classes
             enhance_images: Whether to apply image enhancement
             use_tta: Whether to use Test Time Augmentation (multi-scale)
+            use_tiling: Whether to use 4-tile inference
         """
         self.session = None
         self.input_name = None
@@ -61,6 +62,7 @@ class CrackDetector:
         self.enhance_images = enhance_images
         self.model_type = model_type
         self.use_tta = use_tta
+        self.use_tiling = use_tiling
         self.class_confidences = {}
         self.load_model()
     
@@ -182,6 +184,7 @@ class CrackDetector:
                         break
             else:
                 self.class_confidences[int(key)] = float(value)
+    
     def get_class_color(self, class_id):
         """Get BGR color for each crack type"""
         class_colors = {
@@ -272,7 +275,6 @@ class CrackDetector:
         confidences = np.max(scores, axis=1)
         
         # Apply per-class confidence thresholds
-        # (此處會保留所有通過各自閾值的框，讓 NMS 處理最終的重疊)
         if self.class_confidences:
             valid_detections = np.zeros(len(confidences), dtype=bool)
             for i, (class_id, conf) in enumerate(zip(class_ids, confidences)):
@@ -303,7 +305,7 @@ class CrackDetector:
             x1_orig = np.maximum(0, x1_orig)
             y1_orig = np.maximum(0, y1_orig)
             
-            # 3. Class-Agnostic NMS (使用您驗證過可行的 XYXY 格式)
+            # 3. Class-Agnostic NMS
             boxes_for_nms = np.column_stack([x1_orig, y1_orig, x2_orig, y2_orig]).astype(np.float32)
             confidences_f32 = confidences.astype(np.float32)
             
@@ -450,6 +452,190 @@ class CrackDetector:
         
         return final_detections
     
+    # ============= TILING METHODS =============
+    
+    def split_image_4tiles(self, img):
+        """將影像切成4張 (2x2)"""
+        h, w = img.shape[:2]
+        h_half, w_half = h // 2, w // 2
+        
+        tiles = [
+            img[0:h_half, 0:w_half],           # 左上
+            img[0:h_half, w_half:w],           # 右上
+            img[h_half:h, 0:w_half],           # 左下
+            img[h_half:h, w_half:w]            # 右下
+        ]
+        
+        offsets = [
+            (0, 0),                            # 左上偏移
+            (w_half, 0),                       # 右上偏移
+            (0, h_half),                       # 左下偏移
+            (w_half, h_half)                   # 右下偏移
+        ]
+        
+        return tiles, offsets, (w, h)
+    
+    def check_boundary_proximity(self, box1, box2, w_half, h_half, margin=50):
+        """
+        檢查兩個框是否都靠近同一條切割邊界
+        """
+        x1_min, y1_min, x1_max, y1_max = box1
+        x2_min, y2_min, x2_max, y2_max = box2
+        
+        # === 檢查垂直切割線 (左右邊界) ===
+        box1_right_near = abs(x1_max - w_half) < margin
+        box1_left_near = abs(x1_min - w_half) < margin
+        box2_right_near = abs(x2_max - w_half) < margin
+        box2_left_near = abs(x2_min - w_half) < margin
+        
+        vertical_lr = box1_right_near and box2_left_near
+        vertical_rl = box1_left_near and box2_right_near
+        
+        # === 檢查水平切割線 (上下邊界) ===
+        box1_bottom_near = abs(y1_max - h_half) < margin
+        box1_top_near = abs(y1_min - h_half) < margin
+        box2_bottom_near = abs(y2_max - h_half) < margin
+        box2_top_near = abs(y2_min - h_half) < margin
+        
+        horizontal_tb = box1_bottom_near and box2_top_near
+        horizontal_bt = box1_top_near and box2_bottom_near
+        
+        return vertical_lr or vertical_rl or horizontal_tb or horizontal_bt
+    
+    def merge_tiled_detections(self, all_tile_detections, w_half, h_half, 
+                                boundary_margin=50, iou_threshold=0.3):
+        """
+        合併4個tile的偵測結果
+        """
+        if not all_tile_detections:
+            return []
+        
+        # 收集所有框
+        all_boxes = []
+        all_scores = []
+        all_classes = []
+        
+        for det in all_tile_detections:
+            bbox = det['bbox']
+            all_boxes.append([bbox['x1'], bbox['y1'], bbox['x2'], bbox['y2']])
+            all_scores.append(det['confidence'])
+            all_classes.append(det['class_id'])
+        
+        all_boxes = np.array(all_boxes)
+        all_scores = np.array(all_scores)
+        all_classes = np.array(all_classes)
+        
+        # 合併重疊框
+        merged_detections = []
+        used = np.zeros(len(all_boxes), dtype=bool)
+        
+        for i in range(len(all_boxes)):
+            if used[i]:
+                continue
+            
+            current_box = all_boxes[i]
+            current_class = all_classes[i]
+            overlapping_indices = [i]
+            
+            for j in range(i + 1, len(all_boxes)):
+                if used[j] or all_classes[j] != current_class:
+                    continue
+                
+                # 檢查 IoU
+                iou = self._calc_iou_boxes(current_box, all_boxes[j])
+                
+                # 檢查邊界接近
+                is_near_boundary = self.check_boundary_proximity(
+                    current_box, all_boxes[j], 
+                    w_half, h_half, boundary_margin
+                )
+                
+                if iou > iou_threshold or is_near_boundary:
+                    overlapping_indices.append(j)
+                    used[j] = True
+            
+            # 合併框
+            if len(overlapping_indices) > 1:
+                overlapping_boxes = all_boxes[overlapping_indices]
+                merged_box = np.array([
+                    np.min(overlapping_boxes[:, 0]),  # x1
+                    np.min(overlapping_boxes[:, 1]),  # y1
+                    np.max(overlapping_boxes[:, 2]),  # x2
+                    np.max(overlapping_boxes[:, 3])   # y2
+                ])
+                merged_score = np.max(all_scores[overlapping_indices])
+            else:
+                merged_box = current_box
+                merged_score = all_scores[i]
+            
+            class_name = self.class_names.get(str(current_class), f"class_{current_class}")
+            
+            merged_detections.append({
+                "bbox": {
+                    "x1": float(merged_box[0]),
+                    "y1": float(merged_box[1]),
+                    "x2": float(merged_box[2]),
+                    "y2": float(merged_box[3])
+                },
+                "confidence": float(merged_score),
+                "class_id": int(current_class),
+                "class_name": class_name
+            })
+            used[i] = True
+        
+        return merged_detections
+    
+    def detect_cracks_tiling(self, image, confidence=0.25):
+        """
+        使用4-tile inference偵測裂縫
+        """
+        img_height, img_width = image.shape[:2]
+        
+        # 切割影像
+        tiles, offsets, original_size = self.split_image_4tiles(image)
+        
+        all_tile_detections = []
+        
+        # 對每個tile進行推論
+        for tile_idx, (tile, (offset_x, offset_y)) in enumerate(zip(tiles, offsets)):
+            # Preprocess tile
+            input_tensor, scale, x_offset, y_offset = self.preprocess_image(tile)
+            
+            # Inference
+            outputs = self.session.run(
+                self.output_names, 
+                {self.input_name: input_tensor}
+            )
+            
+            # Postprocess
+            tile_detections = self.postprocess_results(
+                outputs, scale, x_offset, y_offset, confidence
+            )
+            
+            # 轉換座標回原圖
+            for det in tile_detections:
+                det['bbox']['x1'] += offset_x
+                det['bbox']['y1'] += offset_y
+                det['bbox']['x2'] += offset_x
+                det['bbox']['y2'] += offset_y
+            
+            all_tile_detections.extend(tile_detections)
+        
+        # 合併結果
+        w_half = img_width // 2
+        h_half = img_height // 2
+        
+        merged_detections = self.merge_tiled_detections(
+            all_tile_detections,
+            w_half, h_half,
+            boundary_margin=50,
+            iou_threshold=0.3
+        )
+        
+        return merged_detections
+    
+    # ============= END TILING METHODS =============
+    
     def detect_cracks(self, image_path, confidence=0.25, save_results=False):
         """Detect cracks in an image"""
         if not self.model_loaded:
@@ -468,21 +654,21 @@ class CrackDetector:
                 image = image_path
                 display_path = "image"
             
-            # print(f"\n🔍 Analyzing: {Path(display_path).name}")
-            
             img_height, img_width = image.shape[:2]
             
             start_time = time.time()
             
-            if self.use_tta:
-                # Multi-scale TTA (matching Ultralytics: 1.0, 0.83, 0.67)
+            # === TILING MODE ===
+            if self.use_tiling:
+                detections = self.detect_cracks_tiling(image, confidence)
+            
+            # === TTA MODE ===
+            elif self.use_tta:
                 scales = [1.0, 0.83, 0.67]
-                # print(f"🔄 Using Multi-Scale TTA ({len(scales)} scales: {scales})...")
                 
                 all_detections = []
                 
                 for scale_factor in scales:
-                    # Scale image
                     if scale_factor != 1.0:
                         scaled_h = int(img_height * scale_factor)
                         scaled_w = int(img_width * scale_factor)
@@ -494,44 +680,35 @@ class CrackDetector:
                     else:
                         scaled_image = image
                     
-                    # Preprocess
                     input_tensor, scale, x_offset, y_offset = self.preprocess_image(scaled_image)
                     
-                    # Inference
                     outputs = self.session.run(
                         self.output_names, 
                         {self.input_name: input_tensor}
                     )
                     
-                    # Postprocess
-                    detections = self.postprocess_results(
+                    detections_scale = self.postprocess_results(
                         outputs, scale, x_offset, y_offset, confidence
                     )
                     
-                    # Transform coordinates back to original image size
                     if scale_factor != 1.0:
-                        for det in detections:
+                        for det in detections_scale:
                             det['bbox']['x1'] /= scale_factor
                             det['bbox']['y1'] /= scale_factor
                             det['bbox']['x2'] /= scale_factor
                             det['bbox']['y2'] /= scale_factor
                     
-                    # print(f"   Scale {scale_factor:.2f}x: {len(detections)} detections")
-                    all_detections.extend(detections)
+                    all_detections.extend(detections_scale)
                 
-                # print(f"   Total before merging: {len(all_detections)} detections")
-                
-                # Merge multi-scale detections
                 detections = self._merge_multiscale_detections(
                     all_detections,
                     img_width,
                     img_height,
                     iou_threshold=0.5
                 )
-                
-                # print(f"   After merging: {len(detections)} final detections")
+            
+            # === STANDARD MODE ===
             else:
-                # Standard inference
                 input_image, scale, x_offset, y_offset = self.preprocess_image(image)
                 outputs = self.session.run(
                     self.output_names, 
@@ -542,19 +719,6 @@ class CrackDetector:
                 )
             
             detection_time = time.time() - start_time
-            
-            # print(f"⚡ Detection completed in {detection_time:.3f} seconds")
-            
-            if detections:
-                # print(f"🚨 Found {len(detections)} crack(s):")
-                for i, crack in enumerate(detections, 1):
-                    bbox = crack["bbox"]
-                    conf_percent = crack["confidence"] * 100
-                    crack_type = crack["class_name"]
-                    # print(f"   {i}. {crack_type.title()} crack - {conf_percent:.1f}% confidence")
-                    # print(f"       Location: ({bbox['x1']:.0f}, {bbox['y1']:.0f}) to ({bbox['x2']:.0f}, {bbox['y2']:.0f})")
-            # else:
-                # print("✅ No cracks detected in this image")
             
             if save_results and isinstance(image_path, str):
                 self.save_detection_results(image_path, image, detections)
@@ -670,10 +834,6 @@ class CrackDetector:
         
         image_path_result = results_folder / f"{Path(image_path).stem}.jpg"
         cv2.imwrite(str(image_path_result), result_image)
-        
-        # print(f"💾 Results saved")
-        # print(f"   • LabelMe data: {json_path}")
-        # print(f"   • Marked image: {image_path_result}")
 
 def parse_class_confidences(conf_str):
     """Parse class-specific confidence string"""
@@ -715,6 +875,8 @@ def main():
                         help="Model type to use (default: yolov8_single)")
     parser.add_argument("--tta", "-t", action="store_true",
                         help="Use Multi-Scale Test Time Augmentation (slower but more accurate)")
+    parser.add_argument("--tiling", action="store_true",
+                        help="Use 4-tile inference for large images (better for dense cracks)")
     
     args = parser.parse_args()
     
@@ -722,10 +884,16 @@ def main():
         print("\n📁 Please provide an image file or folder:")
         print("   Example: python inference.py image.jpg")
         print("   Example: python inference.py photos/ --enhance --save --model yolov8_4classes --tta")
+        print("   Example with tiling: python inference.py image.jpg --tiling --save")
         print("   Example with per-class confidences: python inference.py image.jpg --class-confidences '0:0.3,1:0.25,2:0.2,3:0.35'")
         args.input = input("\nEnter path: ").strip().strip('"')
     
-    detector = CrackDetector(model_type=args.model, enhance_images=args.enhance, use_tta=args.tta)
+    detector = CrackDetector(
+        model_type=args.model, 
+        enhance_images=args.enhance, 
+        use_tta=args.tta,
+        use_tiling=args.tiling
+    )
     
     if args.class_confidences:
         class_confs = parse_class_confidences(args.class_confidences)
@@ -738,9 +906,11 @@ def main():
         print("🔧 Image enhancement: DISABLED")
         print("   • Use --enhance to enable preprocessing")
     
-    if args.tta:
+    if args.tiling:
+        print("🔲 4-Tile Inference: ENABLED")
+        print("   • Image will be split into 2x2 tiles")
+    elif args.tta:
         print("🔄 Multi-Scale TTA: ENABLED")
-        # print("   • Using 3 scales (1.0x, 0.83x, 0.67x)")
     else:
         print("🔄 Multi-Scale TTA: DISABLED")
         print("   • Use --tta to enable for better accuracy")
@@ -791,7 +961,7 @@ def main():
             print(f"   • Total cracks found: {total_cracks}")
             if len(image_files) > 0:
                 print(f"   • Average cracks per image: {total_cracks/len(image_files):.1f}")
-                print(f"   • Processing time: {batch_time:.2f}s")  # ← 新增
+                print(f"   • Processing time: {batch_time:.2f}s")
                 print(f"   • Average time per image: {batch_time/len(image_files):.2f}s")
     
     else:

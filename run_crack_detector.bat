@@ -13,8 +13,10 @@ set "CONFIDENCE=0.2"
 set "ENHANCE_FLAG=--enhance"
 set "SAVE_FLAG=--save"
 set "TTA_FLAG="
+set "TILING_FLAG="
 set "ENHANCED=Enabled"
 set "TTA=Disabled"
+set "TILING=Disabled"
 set "MODEL_TYPE=yolov8_single"
 set "MODEL_NAME=YOLOv8 Single Class"
 set "INFERENCE_SCRIPT=inference_yolo.py"
@@ -35,22 +37,27 @@ echo Please select a model:
 echo.
 echo 1. 🎯 YOLOv8 Single Class
 echo 2. 🎯 YOLOv8 4 Classes
-echo 3. 🎯 Faster R-CNN
+echo 3. 🎯 YOLOv8 4 Classes (Slicing Inference)
+echo 4. 🎯 Faster R-CNN
 echo.
 echo Current Model: %MODEL_NAME%
 echo ----------------------------------------------------------------
-set /p model_choice="Enter your choice (1-3): "
+set /p model_choice="Enter your choice (1-4): "
 
 if "%model_choice%"=="1" (
     set "MODEL_TYPE=yolov8_single"
     set "MODEL_NAME=YOLOv8 Single Class"
     set "INFERENCE_SCRIPT=inference_yolo.py"
+    set "TILING_FLAG="
+    set "TILING=Disabled"
     goto MENU
 )
 if "%model_choice%"=="2" (
     set "MODEL_TYPE=yolov8_4classes"
     set "MODEL_NAME=YOLOv8 4 Classes"
     set "INFERENCE_SCRIPT=inference_yolo.py"
+    set "TILING_FLAG="
+    set "TILING=Disabled"
     :: 自動啟用 per-class confidence 並設定預設值
     set "CONF_0=0.45"
     set "CONF_1=0.3"
@@ -61,9 +68,26 @@ if "%model_choice%"=="2" (
     goto MENU
 )
 if "%model_choice%"=="3" (
+    set "MODEL_TYPE=yolov8_4classes"
+    set "MODEL_NAME=YOLOv8 4 Classes (Slicing)"
+    set "INFERENCE_SCRIPT=inference_yolo.py"
+    set "TILING_FLAG=--tiling"
+    set "TILING=Enabled"
+    :: 自動啟用 per-class confidence 並設定預設值
+    set "CONF_0=0.45"
+    set "CONF_1=0.3"
+    set "CONF_2=0.2"
+    set "CONF_3=0.4"
+    set "CLASS_CONF_FLAG=--class-confidences 0:0.45,1:0.3,2:0.2,3:0.4"
+    set "USE_CLASS_CONF=Yes"
+    goto MENU
+)
+if "%model_choice%"=="4" (
     set "MODEL_TYPE=faster_rcnn"
     set "MODEL_NAME=Faster R-CNN"
     set "INFERENCE_SCRIPT=inference_frcnn.py"
+    set "TILING_FLAG="
+    set "TILING=Disabled"
     goto MENU
 )
 
@@ -97,6 +121,7 @@ if /i "%USE_CLASS_CONF%"=="Yes" (
 )
 echo   • Image Enhancement:     %ENHANCED%
 echo   • Test Time Aug (TTA):   %TTA%
+echo   • 4-Tile Inference:      %TILING%
 echo.
 echo ----------------------------------------------------------------
 echo Choose your action:
@@ -155,7 +180,7 @@ if "%MODEL_TYPE%"=="faster_rcnn" (
     python %INFERENCE_SCRIPT% "%image_path%" %SAVE_FLAG% %ENHANCE_FLAG% %TTA_FLAG% %CLASS_CONF_FLAG% --confidence %CONFIDENCE% --model %MODEL_TYPE%
 ) else (
     echo Running YOLO inference...
-    python %INFERENCE_SCRIPT% "%image_path%" %SAVE_FLAG% %ENHANCE_FLAG% %TTA_FLAG% %CLASS_CONF_FLAG% --confidence %CONFIDENCE% --model %MODEL_TYPE%
+    python %INFERENCE_SCRIPT% "%image_path%" %SAVE_FLAG% %ENHANCE_FLAG% %TTA_FLAG% %TILING_FLAG% %CLASS_CONF_FLAG% --confidence %CONFIDENCE% --model %MODEL_TYPE%
 )
 
 echo.
@@ -194,7 +219,7 @@ if "%MODEL_TYPE%"=="faster_rcnn" (
     python %INFERENCE_SCRIPT% "%folder_path%" %SAVE_FLAG% %ENHANCE_FLAG% %TTA_FLAG% %CLASS_CONF_FLAG% --confidence %CONFIDENCE% --model %MODEL_TYPE%
 ) else (
     echo Running YOLO inference...
-    python %INFERENCE_SCRIPT% "%folder_path%" %SAVE_FLAG% %ENHANCE_FLAG% %TTA_FLAG% %CLASS_CONF_FLAG% --confidence %CONFIDENCE% --model %MODEL_TYPE%
+    python %INFERENCE_SCRIPT% "%folder_path%" %SAVE_FLAG% %ENHANCE_FLAG% %TTA_FLAG% %TILING_FLAG% %CLASS_CONF_FLAG% --confidence %CONFIDENCE% --model %MODEL_TYPE%
 )
 
 echo.
@@ -228,6 +253,7 @@ if /i "%USE_CLASS_CONF%"=="Yes" (
 )
 echo • Image Enhancement:     %ENHANCED%
 echo • Test Time Aug (TTA):   %TTA%
+echo • 4-Tile Inference:      %TILING%
 echo ----------------------------------------------------------------
 echo.
 set /p new_conf="Enter new global confidence (0.0-1.0, leave blank for current): "
@@ -253,6 +279,8 @@ if "%new_tta%"=="1" (
 
 echo.
 echo ✅ Settings updated.
+echo.
+echo ⚠️ Note: 4-Tile Inference is controlled by model selection (Option 3 in Model Selection)
 pause
 goto MENU
 
@@ -333,4 +361,4 @@ echo.
 echo 👋 Thank you for using the Crack Detection Tool!
 echo.
 timeout /t 2 /nobreak >nul
-exit
+exitgi
