@@ -88,8 +88,8 @@ echo.
 echo Please select a sub-model:
 echo.
 echo 1. Model 7
-echo 2. Model 8 (High res training)
-echo 3. Model 9 (Low res training)
+echo 2. Model 10 (High res training)(not updated yet)
+echo 3. Model 11 (Low res training)
 echo.
 echo B. ↩ Back to Model Selection
 echo ----------------------------------------------------------------

@@ -16,6 +16,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+def fixed_normalization(gray_img, target_min=70, target_max=180):
+    clipped = np.clip(gray_img, target_min, target_max)
+    normalized = ((clipped - target_min) / (target_max - target_min) * 255).astype(np.uint8)
+    return normalized
+
 def enhance_image(image, enhance_images=True):
     """
     Applies image enhancement using contrast stretching and bilateral filtering.
@@ -35,14 +40,14 @@ def enhance_image(image, enhance_images=True):
         gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
         # Apply contrast stretching (histogram normalization)
-        stretched_image = np.zeros_like(gray_image)
-        cv2.normalize(gray_image, stretched_image, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
+        # stretched_image = np.zeros_like(gray_image)
+        # cv2.normalize(gray_image, stretched_image, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
         
         # Apply bilateral filter to reduce noise while preserving edges
-        filtered_image = cv2.bilateralFilter(stretched_image, d=9, sigmaColor=10, sigmaSpace=100)
+        # filtered_image = cv2.bilateralFilter(stretched_image, d=9, sigmaColor=10, sigmaSpace=100)
         
         # Convert back to BGR for model (YOLOv8 expects color input)
-        enhanced_image = cv2.cvtColor(filtered_image, cv2.COLOR_GRAY2BGR)
+        enhanced_image = fixed_normalization(gray_image, target_min=70, target_max=180)
 
         return enhanced_image
     except Exception as e:
