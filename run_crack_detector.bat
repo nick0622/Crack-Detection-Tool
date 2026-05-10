@@ -87,38 +87,56 @@ echo ================================================================
 echo.
 echo Please select a sub-model:
 echo.
-echo 1. Model 7
-echo 2. Model 10 (High res training)(not updated yet)
-echo 3. Model 11 (Low res training)
+echo  5. Model 5
+echo  6. Model 6
+echo  7. Model 7
+echo 10. Model 10
+echo 11. Model 11
 echo.
 echo B. ↩ Back to Model Selection
 echo ----------------------------------------------------------------
-set /p sub_choice="Enter your choice (1/2/3/B): "
+set /p sub_choice="Enter your choice (5/6/7/10/11/B): "
 
 if /i "%sub_choice%"=="B" goto MODEL_SELECTION
 
-if "%sub_choice%"=="1" (
+if "%sub_choice%"=="5" (
     set "MODEL_TYPE=yolov8_4classes"
-    set "MULTI_MODEL_FILE=yolov8_multi.onnx"
-    set "MODEL_NAME=YOLOv8 4 Classes (Standard)"
+    set "MULTI_MODEL_FILE=Model 5.onnx"
+    set "MODEL_NAME=YOLOv8 4 Classes (Model 5)"
     set "INFERENCE_SCRIPT=inference_yolo.py"
-    set "MULTI_MODEL_FLAG=--multi-model-file yolov8_multi.onnx"
+    set "MULTI_MODEL_FLAG=--multi-model-file "Model 5.onnx""
     goto YOLO4_DEFAULTS
 )
-if "%sub_choice%"=="2" (
+if "%sub_choice%"=="6" (
     set "MODEL_TYPE=yolov8_4classes"
-    set "MULTI_MODEL_FILE=yolov8_multi_highres.onnx"
-    set "MODEL_NAME=YOLOv8 4 Classes (High Res)"
+    set "MULTI_MODEL_FILE=Model 6.onnx"
+    set "MODEL_NAME=YOLOv8 4 Classes (Model 6)"
     set "INFERENCE_SCRIPT=inference_yolo.py"
-    set "MULTI_MODEL_FLAG=--multi-model-file yolov8_multi_highres.onnx"
+    set "MULTI_MODEL_FLAG=--multi-model-file "Model 6.onnx""
     goto YOLO4_DEFAULTS
 )
-if "%sub_choice%"=="3" (
+if "%sub_choice%"=="7" (
     set "MODEL_TYPE=yolov8_4classes"
-    set "MULTI_MODEL_FILE=yolov8_multi_lowres.onnx"
-    set "MODEL_NAME=YOLOv8 4 Classes (Low Res)"
+    set "MULTI_MODEL_FILE=Model 7.onnx"
+    set "MODEL_NAME=YOLOv8 4 Classes (Model 7)"
     set "INFERENCE_SCRIPT=inference_yolo.py"
-    set "MULTI_MODEL_FLAG=--multi-model-file yolov8_multi_lowres.onnx"
+    set "MULTI_MODEL_FLAG=--multi-model-file "Model 7.onnx""
+    goto YOLO4_DEFAULTS
+)
+if "%sub_choice%"=="10" (
+    set "MODEL_TYPE=yolov8_4classes"
+    set "MULTI_MODEL_FILE=Model 10.onnx"
+    set "MODEL_NAME=YOLOv8 4 Classes (Model 10)"
+    set "INFERENCE_SCRIPT=inference_yolo.py"
+    set "MULTI_MODEL_FLAG=--multi-model-file "Model 10.onnx""
+    goto YOLO4_DEFAULTS
+)
+if "%sub_choice%"=="11" (
+    set "MODEL_TYPE=yolov8_4classes"
+    set "MULTI_MODEL_FILE=Model 11.onnx"
+    set "MODEL_NAME=YOLOv8 4 Classes (Model 11)"
+    set "INFERENCE_SCRIPT=inference_yolo.py"
+    set "MULTI_MODEL_FLAG=--multi-model-file "Model 11.onnx""
     goto YOLO4_DEFAULTS
 )
 

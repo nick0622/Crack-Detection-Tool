@@ -18,6 +18,7 @@
 * **YOLOv8 四類別 (4 Classes)** 🎯
   * 分類 4 種類型的裂縫
   * 速度與準確度兼顧
+  * 提供 5 個子模型可選擇：Model 5、Model 6、Model 7、Model 10、Model 11
 
 * **Faster R-CNN** 🎯
   * 分類 4 種類型的裂縫
@@ -60,7 +61,7 @@ setup.bat
 - 建立必要資料夾
 - 測試套件匯入
 
-### 3. 預處理影像（可選）
+### 2. 預處理影像（可選）
 
 此步驟會對影像進行增強處理，以改善低品質影像的檢測效果。強烈建議用於有雜訊或光線不佳的照片。
 
@@ -68,27 +69,29 @@ setup.bat
 
 增強後的影像會儲存到 `enhanced_images/` 資料夾。
 
-### 4. 執行裂縫檢測
+### 3. 執行裂縫檢測
 
 執行 `run_crack_detector.bat` 啟動互動式檢測介面。
 
 功能包括：
-- 選擇模型（YOLOv8 單/多類別或 Faster R-CNN）
+- 選擇模型（YOLOv8 單類別、YOLOv8 四類別或 Faster R-CNN）
+- YOLOv8 四類別可進一步選擇子模型（Model 5 / 6 / 7 / 10 / 11）
 - 處理單張影像或整個資料夾
 - 調整信心度閾值
 - 啟用/停用影像增強
 - 啟用/停用測試時增強 (TTA)
 - 設定分類別信心度閾值
 
-### 5. 裂縫偵測信心閾值
+### 4. 裂縫偵測信心閾值
+
 **建議閾值：**
 
 | 裂縫類型 | 預設值 | 建議範圍 | 備註 |
 | -------- | ------ | -------- | ---- |
-| 橫向裂縫 (Transverse, 0) | 0.15 | 0.15 - 0.30 | 常見，容易檢測 |
-| 縱向裂縫 (Longitudinal, 1) | 0.15 | 0.15 - 0.30 | 常見，容易檢測 |
-| 接縫裂縫 (Joint, 2) | 0.15 | 0.15 - 0.25 | 可能需要較高閾值以減少誤判 |
-| 龜裂 (Alligator, 3) | 0.15 | 0.20 - 0.40 | 複雜圖案，可能需要較高閾值 |
+| 橫向裂縫 (Transverse, 0) | 0.45 | 0.30 - 0.50 | 常見，容易檢測 |
+| 縱向裂縫 (Longitudinal, 1) | 0.30 | 0.20 - 0.40 | 常見，容易檢測 |
+| 接縫裂縫 (Joint, 2) | 0.20 | 0.15 - 0.30 | 可能需要較高閾值以減少誤判 |
+| 龜裂 (Alligator, 3) | 0.40 | 0.25 - 0.50 | 複雜圖案，可能需要較高閾值 |
 
 **使用技巧：**
 - 較低閾值 = 更多檢測（較多誤判）
@@ -129,31 +132,6 @@ setup.bat
 - 彩色邊界框（每種裂縫類型不同顏色）
 - 類別標籤及信心度分數
 - 與輸入相同的高解析度輸出
-
-## 檔案結構 📂
-
-```
-yolo_detector/
-├── model/
-│   ├── yolov8_single.onnx          # YOLOv8 單類別模型
-│   ├── yolov8_multi.onnx           # YOLOv8 四類別模型
-│   ├── end2end.onnx                # Faster R-CNN 模型
-│   └── classes.json                # 類別名稱（可選）
-├── images/
-│   └── （您的測試影像）
-├── enhanced_images/
-│   └── （預處理後的增強影像）
-├── results/
-│   ├── *.json                      # LabelMe 格式檢測資料
-│   └── *.jpg                       # 標註影像
-├── inference_yolo.py               # YOLOv8 檢測腳本
-├── inference_frcnn.py              # Faster R-CNN 檢測腳本
-├── preprocess.py                   # 影像增強工具
-├── setup.bat                       # 相依套件安裝
-├── run_preprocessing.bat           # 影像預處理介面
-├── run_crack_detector.bat          # 主要檢測介面
-└── requirements.txt                # Python 相依套件
-```
 
 ## 系統需求 📦
 

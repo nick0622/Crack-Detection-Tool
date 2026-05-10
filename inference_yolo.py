@@ -643,12 +643,16 @@ class CrackDetector:
             return []
 
     def save_detection_results(self, image_path, image, detections):
-        """Save detection results in LabelMe format"""
+        """Save detection results in LabelMe format + improved visualization"""
+
         results_folder = Path("results")
         results_folder.mkdir(exist_ok=True)
 
         image_name = Path(image_path).name
 
+        # =========================
+        # LabelMe output（不動）
+        # =========================
         labelme_data = {
             "version": "5.0.1",
             "flags": {},
@@ -661,7 +665,6 @@ class CrackDetector:
 
         for detection in detections:
             bbox = detection["bbox"]
-            class_name = detection["class_name"]
 
             points = [
                 [bbox["x1"], bbox["y1"]],
@@ -669,7 +672,7 @@ class CrackDetector:
             ]
 
             shape = {
-                "label": class_name,
+                "label": detection["class_name"],
                 "points": points,
                 "group_id": None,
                 "shape_type": "rectangle",
@@ -679,70 +682,130 @@ class CrackDetector:
             labelme_data["shapes"].append(shape)
 
         json_path = results_folder / f"{Path(image_path).stem}.json"
-        with open(json_path, 'w') as f:
+        with open(json_path, "w") as f:
             json.dump(labelme_data, f, indent=2)
 
+        # =========================
+        # Visualization (COM style)
+        # =========================
         result_image = image.copy()
         img_height, img_width = result_image.shape[:2]
 
-        for detection in detections:
-            bbox = detection["bbox"]
-            x1, y1, x2, y2 = int(bbox["x1"]), int(bbox["y1"]), int(bbox["x2"]), int(bbox["y2"])
-            conf = detection["confidence"]
-            class_id = detection["class_id"]
-            class_name = detection["class_name"]
+        # dynamic style
+        if img_width <= 2000:
+            line_width = 3
+            font_scale = 1.3
+            thickness = 2
+            pad = 20
+        else:
+            line_width = 15
+            font_scale = 8
+            thickness = 10
+            pad = 50
 
-            color = self.get_class_color(class_id)
+        font = cv2.FONT_HERSHEY_SIMPLEX
 
-            x1 = int(np.clip(x1, 0, img_width - 1))
-            y1 = int(np.clip(y1, 0, img_height - 1))
-            x2 = int(np.clip(x2, 0, img_width - 1))
-            y2 = int(np.clip(y2, 0, img_height - 1))
+        # =========================
+        # collect boxes
+        # =========================
+        boxes = []
+        confidences = []
+        class_ids = []
+
+        for det in detections:
+            bbox = det["bbox"]
+
+            x1 = int(bbox["x1"])
+            y1 = int(bbox["y1"])
+            x2 = int(bbox["x2"])
+            y2 = int(bbox["y2"])
+
+            # clamp（避免爆掉）
+            x1 = max(0, min(x1, img_width - 1))
+            y1 = max(0, min(y1, img_height - 1))
+            x2 = max(0, min(x2, img_width - 1))
+            y2 = max(0, min(y2, img_height - 1))
 
             if x2 <= x1 or y2 <= y1:
                 continue
 
-            if image.shape[0] <= 2500:
-                line_width = 2
-                font_scale = 2
-                font_thickness = 2
-                padding = 20
-            else:
-                line_width = 16
-                font_scale = 6
-                font_thickness = 8
-                padding = 40
+            boxes.append([x1, y1, x2 - x1, y2 - y1])
+            confidences.append(det["confidence"])
+            class_ids.append(det["class_id"])
 
-            cv2.rectangle(result_image, (x1, y1), (x2, y2), color, line_width)
+        # =========================
+        # per-class NMS (COM style)
+        # =========================
+        indices = []
+        nms_threshold = 0.35
+
+        for cls_id in set(class_ids):
+            cls_indices = [i for i, cid in enumerate(class_ids) if cid == cls_id]
+
+            cls_boxes = [boxes[i] for i in cls_indices]
+            cls_conf = [confidences[i] for i in cls_indices]
+
+            cls_nms = cv2.dnn.NMSBoxes(cls_boxes, cls_conf, 0.0, nms_threshold)
+
+            if cls_nms is not None and len(cls_nms) > 0:
+                cls_nms = np.array(cls_nms).flatten()
+                for j in cls_nms:
+                    indices.append(cls_indices[j])
+
+        # =========================
+        # draw boxes
+        # =========================
+        indices = sorted(indices, key=lambda i: confidences[i], reverse=True)
+
+        for i in indices:
+            x, y, w, h = boxes[i]
+            cls = class_ids[i]
+            conf = confidences[i]
+
+            color = self.get_class_color(cls)
+            class_name = self.class_names.get(str(cls), f"class_{cls}")
 
             label = f"{class_name.title()} {conf:.2f}"
-            (label_width, label_height), baseline = cv2.getTextSize(
-                label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness
+
+            # box
+            cv2.rectangle(
+                result_image,
+                (x, y),
+                (x + w, y + h),
+                color,
+                line_width
             )
 
-            text_x = x1 + padding
-            text_y = y1 - padding
+            # text size
+            (text_w, text_h), baseline = cv2.getTextSize(
+                label, font, font_scale, thickness
+            )
 
-            if text_y - label_height < 0:
-                text_y = y1 + label_height + 30
-                if text_y > y2:
-                    text_y = y2 + label_height + 30
+            text_x = x
+            text_y = y - pad
 
-            if text_x < 0:
-                text_x = padding
+            # boundary fix (COM style)
+            if text_y - text_h < 0:
+                text_y = y + text_h + 20
 
-            if text_x + label_width > img_width:
-                text_x = max(padding, img_width - label_width - padding)
+            if text_x + text_w > img_width:
+                text_x = img_width - text_w
 
-            if text_y > img_height:
-                text_y = img_height - padding
+            text_x = max(5, text_x)
+            text_y = min(img_height - baseline, text_y)
 
-            text_x = int(np.clip(text_x, 0, img_width - 1))
-            text_y = int(np.clip(text_y, label_height, img_height - 1))
-
-            cv2.putText(result_image, label, (text_x, text_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, font_thickness)
-
+            # text
+            cv2.putText(
+                result_image,
+                label,
+                (text_x, text_y),
+                font,
+                font_scale,
+                color,
+                thickness,
+                lineType=cv2.LINE_AA
+            )
+            
         image_path_result = results_folder / f"{Path(image_path).stem}.jpg"
         cv2.imwrite(str(image_path_result), result_image)
 
